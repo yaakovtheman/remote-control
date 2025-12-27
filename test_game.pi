@@ -1,0 +1,7 @@
+import pygame, time
+pygame.init(); pygame.joystick.init()
+j=pygame.joystick.Joystick(0); j.init()
+while True:
+    pygame.event.pump()
+    print([round(j.get_axis(i),3) for i in range(j.get_numaxes())], end="\r")
+    time.sleep(0.05)
