@@ -1,3 +1,15 @@
 status.json
 __pycache__/
 *.pyc
+.DS_Store
+logs/
+*.log
+.venv/
+venv/
+env/
+*.egg-info/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.tox/
+.cache/

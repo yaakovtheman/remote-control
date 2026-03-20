@@ -1,0 +1,15 @@
+{
+  "server_ip": "dozer.local",
+  "server_port": 7000,
+  "send_hz": 20,
+  "deadzone": 0.05,
+  "axis_steer": 0,
+  "axis_drive": 1,
+  "axis_tilt": 2,
+  "axis_lift": 3,
+  "invert_tilt": false,
+  "invert_lift": false,
+  "invert_steer": false,
+  "invert_drive": false,
+  "btn_estop": 0
+}

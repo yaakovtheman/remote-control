@@ -1,4 +1,0 @@
-paths:
-  dozer:
-    source: rtsp://admin:Aa123456!@172.16.1.100:554/profile1
-    rtspTransport: tcp

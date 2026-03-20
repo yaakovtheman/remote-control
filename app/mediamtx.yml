@@ -1,0 +1,4 @@
+paths:
+  cam1:
+    source: rtsp://admin:Aa123456!@192.168.150.195:554/profile1
+    rtspTransport: tcp
