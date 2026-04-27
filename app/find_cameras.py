@@ -92,7 +92,7 @@ def update_config_with_pi(ip):
     write_config(cfg)
     return cfg
 
-TIMEOUT = 0.7
+TIMEOUT = 1.0
 MAX_WORKERS = 32
 
 

@@ -53,6 +53,12 @@ def load_config():
 
 cfg = load_config()
 
+def cfg_int(key, default):
+    try:
+        return int(cfg.get(key, default))
+    except Exception:
+        return int(default)
+
 SERVER_IP   = cfg["server_ip"]
 SERVER_PORT = int(cfg["server_port"])
 SEND_HZ     = int(cfg["send_hz"])
@@ -68,7 +74,20 @@ INVERT_DRIVE = bool(cfg["invert_drive"])
 INVERT_TILT  = bool(cfg["invert_tilt"])
 INVERT_LIFT  = bool(cfg["invert_lift"])
 
-BTN_ESTOP   = int(cfg["btn_estop"])
+BTN_ESTOP      = cfg_int("btn_estop", 0)
+BTN_SPDUP_IN   = cfg_int("btn_speed_up", 2)
+BTN_SPDDN_IN   = cfg_int("btn_speed_down", 1)
+BTN_PARK_IN    = cfg_int("btn_park", 3)
+BTN_KEYON_IN   = cfg_int("btn_key_on", 5)
+BTN_KEYSTART_IN = cfg_int("btn_key_start", 7)
+BTN_ES_IN      = cfg_int("btn_es", 6)
+BTN_IMPL_IN    = cfg_int("btn_impl", 4)
+
+# -1 disables the mapping.
+HAT_SPDUP_DIR  = cfg_int("hat_speed_up_dir", 0)    # 0=up,1=down,2=right,3=left
+HAT_SPDDN_DIR  = cfg_int("hat_speed_down_dir", 1)
+HAT_IMPL_DIR   = cfg_int("hat_impl_dir", 2)
+HAT_PARK_DIR   = cfg_int("hat_park_dir", 3)
 
 if "--ip" in sys.argv:
     SERVER_IP = sys.argv[sys.argv.index("--ip") + 1]
@@ -146,7 +165,7 @@ def joystick_present_now():
 
 def safe_read_inputs(js):
     """
-    Returns (line_bytes, ok, joy_name)
+    Returns (line_bytes, ok, joy_name, inputs)
     ok=False means joystick is gone/broken.
     """
     try:
@@ -154,7 +173,7 @@ def safe_read_inputs(js):
 
         # If the OS says no joystick, treat as disconnected immediately
         if not joystick_present_now():
-            return b"STOP\n", False, None
+            return b"STOP\n", False, None, None
 
         steer_raw = js.get_axis(AXIS_STEER)
         drive_raw = js.get_axis(AXIS_DRIVE)
@@ -173,30 +192,65 @@ def safe_read_inputs(js):
 
         # E-STOP?
         if js.get_button(BTN_ESTOP) == 1:
-            return b"STOP\n", True, js.get_name()
+            return b"STOP\n", True, js.get_name(), {
+                "estop_pressed": True,
+                "hat": js.get_hat(0) if js.get_numhats() > 0 else None,
+                "buttons_pressed": [i for i in range(js.get_numbuttons()) if js.get_button(i)],
+                "axes_raw": [round(js.get_axis(i), 3) for i in range(min(8, js.get_numaxes()))],
+            }
 
         buttons = 0
-        if js.get_button(2): buttons |= BTN_SPDUP
-        if js.get_button(1): buttons |= BTN_SPDDN
-        if js.get_button(3): buttons |= BTN_PARK
-        if js.get_button(5): buttons |= BTN_KEYON
-        if js.get_button(7): buttons |= BTN_KEYSTART
-        if js.get_button(6): buttons |= BTN_ES
-        if js.get_button(4): buttons |= BTN_IMPL
+        if js.get_button(BTN_SPDUP_IN): buttons |= BTN_SPDUP
+        if js.get_button(BTN_SPDDN_IN): buttons |= BTN_SPDDN
+        if js.get_button(BTN_PARK_IN): buttons |= BTN_PARK
+        if js.get_button(BTN_KEYON_IN): buttons |= BTN_KEYON
+        if js.get_button(BTN_KEYSTART_IN): buttons |= BTN_KEYSTART
+        if js.get_button(BTN_ES_IN): buttons |= BTN_ES
+        if js.get_button(BTN_IMPL_IN): buttons |= BTN_IMPL
 
+        hat = None
         if js.get_numhats() > 0:
             hx, hy = js.get_hat(0)
-            if hy > 0: buttons |= BTN_SPDUP
-            if hy < 0: buttons |= BTN_SPDDN
-            if hx > 0: buttons |= BTN_IMPL
-            if hx < 0: buttons |= BTN_PARK
+            hat = [hx, hy]
+
+            if HAT_SPDUP_DIR == 0 and hy > 0: buttons |= BTN_SPDUP
+            if HAT_SPDUP_DIR == 1 and hy < 0: buttons |= BTN_SPDUP
+            if HAT_SPDUP_DIR == 2 and hx > 0: buttons |= BTN_SPDUP
+            if HAT_SPDUP_DIR == 3 and hx < 0: buttons |= BTN_SPDUP
+
+            if HAT_SPDDN_DIR == 0 and hy > 0: buttons |= BTN_SPDDN
+            if HAT_SPDDN_DIR == 1 and hy < 0: buttons |= BTN_SPDDN
+            if HAT_SPDDN_DIR == 2 and hx > 0: buttons |= BTN_SPDDN
+            if HAT_SPDDN_DIR == 3 and hx < 0: buttons |= BTN_SPDDN
+
+            if HAT_IMPL_DIR == 0 and hy > 0: buttons |= BTN_IMPL
+            if HAT_IMPL_DIR == 1 and hy < 0: buttons |= BTN_IMPL
+            if HAT_IMPL_DIR == 2 and hx > 0: buttons |= BTN_IMPL
+            if HAT_IMPL_DIR == 3 and hx < 0: buttons |= BTN_IMPL
+
+            if HAT_PARK_DIR == 0 and hy > 0: buttons |= BTN_PARK
+            if HAT_PARK_DIR == 1 and hy < 0: buttons |= BTN_PARK
+            if HAT_PARK_DIR == 2 and hx > 0: buttons |= BTN_PARK
+            if HAT_PARK_DIR == 3 and hx < 0: buttons |= BTN_PARK
 
         line = f"SET {lift} {tilt} {drive} {steer} {buttons}\n".encode()
-        return line, True, js.get_name()
+        return line, True, js.get_name(), {
+            "estop_pressed": False,
+            "hat": hat,
+            "buttons_pressed": [i for i in range(js.get_numbuttons()) if js.get_button(i)],
+            "axes_raw": [round(js.get_axis(i), 3) for i in range(min(8, js.get_numaxes()))],
+            "axes_mapped": {
+                "steer": steer,
+                "drive": drive,
+                "tilt": tilt,
+                "lift": lift,
+            },
+            "buttons_mask": buttons,
+        }
 
     except Exception:
         # Unplug / invalid handle / SDL hiccup
-        return b"STOP\n", False, None
+        return b"STOP\n", False, None, None
 
 # ==== Main ====
 def main():
@@ -212,6 +266,7 @@ def main():
     period = 1.0 / SEND_HZ
     last_send_print = 0.0
     last_status_write = 0.0
+    status_every = 0.12
 
     # Don’t spam re-init
     last_joy_probe = 0.0
@@ -219,6 +274,8 @@ def main():
 
     joy_name = None
     joy_connected = bool(js is not None)
+    last_command = "STOP"
+    last_inputs = None
 
     try:
         while RUNNING:
@@ -239,16 +296,18 @@ def main():
                 joy_connected = False
                 joy_name = None
             else:
-                line, ok, nm = safe_read_inputs(js)
+                line, ok, nm, inputs = safe_read_inputs(js)
                 if not ok:
                     print("[joy] disconnected -> sending STOP and waiting for reconnect")
                     js = None
                     line = b"STOP\n"
                     joy_connected = False
                     joy_name = None
+                    last_inputs = None
                 else:
                     joy_connected = True
                     joy_name = nm
+                    last_inputs = inputs
 
             # Log what we’re sending (once per second)
             if time.time() - last_send_print > 1:
@@ -257,10 +316,11 @@ def main():
                 except Exception:
                     dbg = str(line)
                 print(f"[send] {dbg}")
+                last_command = dbg
                 last_send_print = time.time()
 
-            # Write status (once per second)
-            if time.time() - last_status_write > 1.0:
+            # Write status frequently so web UI reacts quickly.
+            if time.time() - last_status_write > status_every:
                 status = {
                     "ts": time.time(),
                     "tcp_connected": bool(tcp_connected),
@@ -268,6 +328,8 @@ def main():
                     "server": f"{SERVER_IP}:{SERVER_PORT}",
                     "joystick_connected": bool(joy_connected),
                     "joystick_name": joy_name,
+                    "last_command": last_command,
+                    "inputs": last_inputs,
                 }
                 try:
                     write_status(status)
