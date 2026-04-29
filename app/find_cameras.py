@@ -28,6 +28,62 @@ def write_config(cfg):
     os.replace(tmp, CONFIG_PATH)
 
 
+def parse_ipv4(value):
+    try:
+        ip_obj = ipaddress.ip_address(str(value).strip())
+        if ip_obj.version == 4:
+            return str(ip_obj)
+    except Exception:
+        pass
+    return None
+
+
+def ip_to_cidr24(ip):
+    parsed = parse_ipv4(ip)
+    if not parsed:
+        return None
+    return str(ipaddress.ip_network(f"{parsed}/24", strict=False))
+
+
+def get_priority_inputs():
+    cfg = read_config()
+
+    preferred_ips = []
+    preferred_subnets = []
+    seen_ips = set()
+    seen_subnets = set()
+
+    def add_ip(value):
+        ip = parse_ipv4(value)
+        if not ip or ip in seen_ips:
+            return
+        seen_ips.add(ip)
+        preferred_ips.append(ip)
+        cidr = ip_to_cidr24(ip)
+        if cidr and cidr not in seen_subnets:
+            seen_subnets.add(cidr)
+            preferred_subnets.append(cidr)
+
+    # Previously found Pi IP (if numeric)
+    add_ip(cfg.get("server_ip"))
+
+    # Previously found camera IPs
+    for value in cfg.get("known_camera_ips", []):
+        add_ip(value)
+
+    # Explicit saved preferred subnets
+    for value in cfg.get("preferred_subnets", []):
+        try:
+            cidr = str(ipaddress.ip_network(str(value).strip(), strict=False))
+        except Exception:
+            continue
+        if cidr not in seen_subnets:
+            seen_subnets.add(cidr)
+            preferred_subnets.append(cidr)
+
+    return preferred_ips, preferred_subnets
+
+
 def check_pi(ip):
     url = f"http://{ip}:8088/api/status"
     req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -59,7 +115,11 @@ def check_pi(ip):
 
 
 def scan_pi():
-    local_ip, subnets, hosts = get_hosts()
+    preferred_ips, preferred_subnets = get_priority_inputs()
+    local_ip, subnets, hosts = get_hosts(
+        preferred_ips=preferred_ips,
+        preferred_subnets=preferred_subnets,
+    )
 
     if not local_ip:
         return {
@@ -89,6 +149,11 @@ def scan_pi():
 def update_config_with_pi(ip):
     cfg = read_config()
     cfg["server_ip"] = ip
+    if "preferred_subnets" not in cfg or not isinstance(cfg["preferred_subnets"], list):
+        cfg["preferred_subnets"] = []
+    cidr = ip_to_cidr24(ip)
+    if cidr and cidr not in cfg["preferred_subnets"]:
+        cfg["preferred_subnets"] = [cidr] + cfg["preferred_subnets"]
     write_config(cfg)
     return cfg
 
@@ -149,7 +214,9 @@ def get_local_ip():
     return None
 
 
-def get_hosts():
+def get_hosts(preferred_ips=None, preferred_subnets=None):
+    preferred_ips = preferred_ips or []
+    preferred_subnets = preferred_subnets or []
     local_ip = get_local_ip()
     if not local_ip:
         return None, [], []
@@ -164,7 +231,11 @@ def get_hosts():
             seen.add(key)
             candidate_networks.append(net)
 
-    # First scan the local /24
+    # First scan known useful subnets
+    for cidr in preferred_subnets:
+        add_network(cidr)
+
+    # Then scan the local /24
     add_network(f"{local_ip}/24")
 
     # Then scan the most common fallback camera subnets
@@ -177,10 +248,24 @@ def get_hosts():
         add_network(cidr)
 
     hosts = []
+    seen_hosts = set()
+
+    # First try known good IPs
+    for ip in preferred_ips:
+        if ip == local_ip:
+            continue
+        if ip in seen_hosts:
+            continue
+        seen_hosts.add(ip)
+        hosts.append(ip)
+
     for net in candidate_networks:
         for ip in net.hosts():
             ip_str = str(ip)
             if ip_str != local_ip:
+                if ip_str in seen_hosts:
+                    continue
+                seen_hosts.add(ip_str)
                 hosts.append(ip_str)
 
     return local_ip, [str(net) for net in candidate_networks], hosts
@@ -243,7 +328,11 @@ def check_camera(ip):
 
 
 def scan_cameras():
-    local_ip, subnets, hosts = get_hosts()
+    preferred_ips, preferred_subnets = get_priority_inputs()
+    local_ip, subnets, hosts = get_hosts(
+        preferred_ips=preferred_ips,
+        preferred_subnets=preferred_subnets,
+    )
 
     if not local_ip:
         return {
@@ -264,6 +353,30 @@ def scan_cameras():
                 found.append(result)
 
     found.sort(key=lambda cam: tuple(int(x) for x in cam["ip"].split(".")))
+
+    # Persist successful camera IPs/subnets for faster future scans.
+    cfg = read_config()
+    cfg["known_camera_ips"] = [cam["ip"] for cam in found]
+    existing_subnets = cfg.get("preferred_subnets", [])
+    if not isinstance(existing_subnets, list):
+        existing_subnets = []
+    merged_subnets = []
+    seen_subnets = set()
+    for cidr in existing_subnets:
+        try:
+            normalized = str(ipaddress.ip_network(str(cidr).strip(), strict=False))
+        except Exception:
+            continue
+        if normalized not in seen_subnets:
+            seen_subnets.add(normalized)
+            merged_subnets.append(normalized)
+    for cam in found:
+        cidr = ip_to_cidr24(cam["ip"])
+        if cidr and cidr not in seen_subnets:
+            seen_subnets.add(cidr)
+            merged_subnets.append(cidr)
+    cfg["preferred_subnets"] = merged_subnets
+    write_config(cfg)
 
     return {
         "local_ip": local_ip,

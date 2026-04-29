@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+APP_DIR="$ROOT_DIR/app"
 
 echo "== Control stack status =="
 echo "Root: $ROOT_DIR"
@@ -23,8 +24,8 @@ check_proc () {
   echo
 }
 
-check_proc "Remote client" "$ROOT_DIR/remote_pi_client.py"
-check_proc "Web config server" "$ROOT_DIR/settings_server.py"
+check_proc "Remote client" "$APP_DIR/remote_pi_client.py"
+check_proc "Web config server" "$APP_DIR/settings_server.py"
 check_proc "MediaMTX" "mediamtx"
 
 echo "== Listening ports =="
