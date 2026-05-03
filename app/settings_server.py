@@ -1,5 +1,5 @@
 from flask import Flask, request, redirect, render_template_string, jsonify
-import json, os, subprocess
+import json, os, subprocess, sys
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
@@ -549,9 +549,15 @@ def save():
 
     action = request.form.get("action")
     if action == "save_restart":
-        # simplest apply method
-        subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME], check=False)
-        return render_template_string(HTML, cfg=cfg, msg="Saved and restarted.", cls="ok")
+        if sys.platform.startswith("linux"):
+            subprocess.run(["sudo", "systemctl", "restart", SERVICE_NAME], check=False)
+            return render_template_string(HTML, cfg=cfg, msg="Saved and restarted.", cls="ok")
+        return render_template_string(
+            HTML,
+            cfg=cfg,
+            msg="Saved. Restart the joystick / remote client manually to apply settings (automatic restart uses systemd on Linux only).",
+            cls="ok",
+        )
 
     return render_template_string(HTML, cfg=cfg, msg="Saved.", cls="ok")
 
