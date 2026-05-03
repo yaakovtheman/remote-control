@@ -119,13 +119,13 @@ else
   CAM_SCAN_RAW="$("$VENV_PY" "$FIND_CAMERAS_PY" --cam 2>/dev/null || true)"
 
   SCAN_SUMMARY="$(
-    printf '%s' "$CAM_SCAN_RAW" | "$VENV_PY" - "$MEDIAMTX_CFG" "$CAM_USER" "$CAM_PASS" <<'PY'
-import json, pathlib, sys
+    CAM_SCAN_RAW_JSON="$CAM_SCAN_RAW" "$VENV_PY" - "$MEDIAMTX_CFG" "$CAM_USER" "$CAM_PASS" <<'PY'
+import json, os, pathlib, sys
 
 cfg_path = pathlib.Path(sys.argv[1])
 user = sys.argv[2]
 pw = sys.argv[3]
-raw = sys.stdin.read().strip()
+raw = os.environ.get("CAM_SCAN_RAW_JSON", "").strip()
 
 count = 0
 subnets = []
@@ -150,7 +150,7 @@ for cam in cams:
         continue
     lines.extend([
         f"  cam{i}:",
-        f"    source: rtsp://{user}:{pw}@{ip}:554/profile1",
+        f"    source: rtsp://{user}:{pw}@{ip}:554/profile2",
         "    rtspTransport: tcp",
     ])
     i += 1

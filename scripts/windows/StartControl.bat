@@ -17,8 +17,6 @@ set "SETTINGS_PY=%APP_DIR%\settings_server.py"
 set "CONFIG_JSON=%APP_DIR%\config.json"
 set "SCAN_JSON=%TEMP%\control_cameras.json"
 
-set "CAM_USER=admin"
-set "CAM_PASS=Aa123456!"
 set "PI_IP="
 set "CAM_COUNT=0"
 set "SUBNETS=unknown"
@@ -55,7 +53,7 @@ call :pulse "Running Pi scan"
 "%VENV_PY%" "%FIND_CAMERAS_PY%" --pi --pretty
 if errorlevel 1 (call :warn "Pi scan returned error, continuing")
 
-for /f "usebackq delims=" %%I in (`"%VENV_PY%" -c "import json, pathlib; cfg=json.loads(pathlib.Path(r'%CONFIG_JSON%').read_text(encoding='utf-8')); print(cfg.get('server_ip',''))"`) do set "PI_IP=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip) { [string]$cfg.server_ip }"`) do set "PI_IP=%%I"
 if defined PI_IP (call :ok "Pi IP: !PI_IP!") else (call :warn "No Pi IP in config.json")
 
 call :step "Scan cameras and build mediamtx.yml"
@@ -67,11 +65,31 @@ if errorlevel 1 (
     if errorlevel 1 call :fail_with "Failed to create fallback mediamtx.yml"
     set "CAM_COUNT=0"
 ) else (
-    for /f "usebackq delims=" %%C in (`"%VENV_PY%" -c "import json, pathlib; d=json.loads(pathlib.Path(r'%SCAN_JSON%').read_text(encoding='utf-8')); print(d.get('count',0))"`) do set "CAM_COUNT=%%C"
-    for /f "usebackq delims=" %%S in (`"%VENV_PY%" -c "import json, pathlib; d=json.loads(pathlib.Path(r'%SCAN_JSON%').read_text(encoding='utf-8')); print(', '.join(d.get('subnets',[])) or 'unknown')"`) do set "SUBNETS=%%S"
+    for /f "usebackq delims=" %%C in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($null -ne $d.count) { [string]$d.count } else { '0' }"`) do set "CAM_COUNT=%%C"
+    for /f "usebackq delims=" %%S in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($d.subnets -and $d.subnets.Count -gt 0) { ($d.subnets -join ', ') } else { 'unknown' }"`) do set "SUBNETS=%%S"
     call :info "Checked subnets: !SUBNETS!"
     call :info "Found !CAM_COUNT! cameras"
-    "%VENV_PY%" -c "import json, pathlib; p=pathlib.Path(r'%SCAN_JSON%'); data=json.loads(p.read_text(encoding='utf-8')); cams=data.get('cameras', []); out=pathlib.Path(r'%MEDIAMTX_CFG%'); lines=['paths:']; i=1; user=r'%CAM_USER%'; pw=r'%CAM_PASS%'; [lines.extend([f'  cam{i}:', f'    source: rtsp://{user}:{pw}@{cam.get(\"ip\")}:554/profile1', '    rtspTransport: tcp']) or globals().__setitem__('i', i+1) for cam in cams if cam.get('ip')]; out.write_text('\n'.join(lines)+'\n', encoding='utf-8')"
+    powershell -NoProfile -Command ^
+      "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; " ^
+      "$cfg = $null; try { $cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json } catch {}; " ^
+      "$camUser = 'admin'; " ^
+      "$camPass = 'Aa123456!'; " ^
+      "if ($cfg -and $cfg.PSObject.Properties.Name -contains 'camera_user' -and -not [string]::IsNullOrWhiteSpace([string]$cfg.camera_user)) { $camUser = [string]$cfg.camera_user }; " ^
+      "if ($cfg -and $cfg.PSObject.Properties.Name -contains 'camera_pass' -and -not [string]::IsNullOrWhiteSpace([string]$cfg.camera_pass)) { $camPass = [string]$cfg.camera_pass }; " ^
+      "$cams = @(); if ($d.cameras) { $cams = @($d.cameras) }; " ^
+      "$lines = New-Object System.Collections.Generic.List[string]; " ^
+      "$i = 1; " ^
+      "if ($cams.Count -gt 0) { " ^
+      "  $lines.Add('paths:') | Out-Null; " ^
+      "  foreach ($cam in $cams) { " ^
+      "    if ($null -eq $cam.ip -or [string]::IsNullOrWhiteSpace([string]$cam.ip)) { continue }; " ^
+      "    $lines.Add(('  cam{0}:' -f $i)) | Out-Null; " ^
+      "    $lines.Add(('    source: rtsp://{0}:{1}@{2}:554/profile1' -f $camUser, $camPass, $cam.ip)) | Out-Null; " ^
+      "    $lines.Add('    rtspTransport: tcp') | Out-Null; " ^
+      "    $i += 1 " ^
+      "  } " ^
+      "}; " ^
+      "if ($lines.Count -eq 0) { Set-Content -Path '%MEDIAMTX_CFG%' -Value 'paths: {}' -Encoding UTF8 } else { Set-Content -Path '%MEDIAMTX_CFG%' -Value ($lines -join [Environment]::NewLine) -Encoding UTF8 }"
     if errorlevel 1 call :fail_with "Failed to build mediamtx.yml"
     powershell -NoProfile -Command "$content = Get-Content -Path '%MEDIAMTX_CFG%' -Raw; if ([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'cam\d+:') { Set-Content -Path '%MEDIAMTX_CFG%' -Value \"paths: {}`r`n\" -Encoding UTF8 }"
 )
@@ -98,7 +116,7 @@ start "" "!TARGET_URL!"
 
 echo.
 echo ************************************************************
-echo * ✅ Startup completed
+echo * Startup completed
 echo * Pi IP: !PI_IP!
 echo * Cameras: !CAM_COUNT!
 echo * Subnets: !SUBNETS!
@@ -117,7 +135,7 @@ echo ==================== CONTROL STATUS ====================
 call :show_service "SettingsServer" "%PID_DIR%\settings_server.pid"
 call :show_service "RemotePiClient" "%PID_DIR%\remote_pi_client.pid"
 call :show_service "MediaMTX" "%PID_DIR%\mediamtx.pid"
-for /f "usebackq delims=" %%I in (`"%VENV_PY%" -c "import json, pathlib; cfg=json.loads(pathlib.Path(r'%CONFIG_JSON%').read_text(encoding='utf-8')); print(cfg.get('server_ip','127.0.0.1'))"`) do set "PI_IP=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip -and -not [string]::IsNullOrWhiteSpace([string]$cfg.server_ip)) { [string]$cfg.server_ip } else { '127.0.0.1' }"`) do set "PI_IP=%%I"
 set "TARGET_URL=http://%PI_IP%:8088/"
 powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing '%TARGET_URL%' -TimeoutSec 3; Write-Host ('Web UI: UP (HTTP ' + $r.StatusCode + ') - %TARGET_URL%') } catch { Write-Host ('Web UI: DOWN - %TARGET_URL%') }"
 echo Logs: %LOG_DIR%
@@ -192,7 +210,7 @@ exit /b 0
 :banner
 cls
 echo ************************************************************
-echo * ⭐ CONTROL LAUNCHER - WINDOWS ⭐
+echo * CONTROL LAUNCHER - WINDOWS
 echo * Professional startup with status and service control
 echo ************************************************************
 echo * Project root: %ROOT_DIR%
@@ -227,7 +245,7 @@ set /a N+=1
 set "STARS="
 for /L %%A in (1,1,!N!) do set "STARS=!STARS!*"
 if !N! GTR 3 set "N=0" & set "STARS="
-<nul set /p "=. !MSG! !STARS!`r"
+echo . !MSG! !STARS!
 ping 127.0.0.1 -n 2 >nul
 if !N! LSS 3 goto pulse_loop
 echo.

@@ -1,7 +1,7 @@
 paths:
   cam1:
-    source: rtsp://admin:Aa123456!@192.168.10.172:554/profile1
+    source: rtsp://admin:Aa123456!@192.168.10.172:554/profile2
     rtspTransport: tcp
   cam2:
-    source: rtsp://admin:Aa123456!@192.168.10.228:554/profile1
+    source: rtsp://admin:Aa123456!@192.168.10.228:554/profile2
     rtspTransport: tcp
