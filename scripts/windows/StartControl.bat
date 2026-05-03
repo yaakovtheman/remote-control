@@ -69,27 +69,7 @@ if errorlevel 1 (
     for /f "usebackq delims=" %%S in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($d.subnets -and $d.subnets.Count -gt 0) { ($d.subnets -join ', ') } else { 'unknown' }"`) do set "SUBNETS=%%S"
     call :info "Checked subnets: !SUBNETS!"
     call :info "Found !CAM_COUNT! cameras"
-    powershell -NoProfile -Command ^
-      "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; " ^
-      "$cfg = $null; try { $cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json } catch {}; " ^
-      "$camUser = 'admin'; " ^
-      "$camPass = 'Aa123456!'; " ^
-      "if ($cfg -and $cfg.PSObject.Properties.Name -contains 'camera_user' -and -not [string]::IsNullOrWhiteSpace([string]$cfg.camera_user)) { $camUser = [string]$cfg.camera_user }; " ^
-      "if ($cfg -and $cfg.PSObject.Properties.Name -contains 'camera_pass' -and -not [string]::IsNullOrWhiteSpace([string]$cfg.camera_pass)) { $camPass = [string]$cfg.camera_pass }; " ^
-      "$cams = @(); if ($d.cameras) { $cams = @($d.cameras) }; " ^
-      "$lines = New-Object System.Collections.Generic.List[string]; " ^
-      "$i = 1; " ^
-      "if ($cams.Count -gt 0) { " ^
-      "  $lines.Add('paths:') | Out-Null; " ^
-      "  foreach ($cam in $cams) { " ^
-      "    if ($null -eq $cam.ip -or [string]::IsNullOrWhiteSpace([string]$cam.ip)) { continue }; " ^
-      "    $lines.Add(('  cam{0}:' -f $i)) | Out-Null; " ^
-      "    $lines.Add(('    source: rtsp://{0}:{1}@{2}:554/profile1' -f $camUser, $camPass, $cam.ip)) | Out-Null; " ^
-      "    $lines.Add('    rtspTransport: tcp') | Out-Null; " ^
-      "    $i += 1 " ^
-      "  } " ^
-      "}; " ^
-      "if ($lines.Count -eq 0) { Set-Content -Path '%MEDIAMTX_CFG%' -Value 'paths: {}' -Encoding UTF8 } else { Set-Content -Path '%MEDIAMTX_CFG%' -Value ($lines -join [Environment]::NewLine) -Encoding UTF8 }"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\windows\build_mediamtx.ps1" "%SCAN_JSON%" "%CONFIG_JSON%" "%MEDIAMTX_CFG%"
     if errorlevel 1 call :fail_with "Failed to build mediamtx.yml"
     powershell -NoProfile -Command "$content = Get-Content -Path '%MEDIAMTX_CFG%' -Raw; if ([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'cam\d+:') { Set-Content -Path '%MEDIAMTX_CFG%' -Value \"paths: {}`r`n\" -Encoding UTF8 }"
 )
