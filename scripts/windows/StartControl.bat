@@ -106,7 +106,7 @@ echo * Status command: scripts\windows\StartControl.bat --status
 echo * Stop command:   scripts\windows\StartControl.bat --stop
 echo ************************************************************
 echo.
-pause
+call :maybe_pause
 exit /b 0
 
 :status
@@ -238,5 +238,11 @@ echo * FAIL:
 echo * %~1
 echo ************************************************************
 echo.
-pause
+call :maybe_pause
 exit /b 1
+
+:maybe_pause
+rem When set (e.g. by ControlCenterGui.ps1), skip pause so the GUI is not blocked
+if /I "%CONTROL_NONINTERACTIVE%"=="1" exit /b 0
+pause
+exit /b 0

@@ -1,5 +1,5 @@
 {
-  "server_ip": "192.168.10.192",
+  "server_ip": "dozer.local",
   "server_port": 7000,
   "send_hz": 20,
   "deadzone": 0.05,

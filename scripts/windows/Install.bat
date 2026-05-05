@@ -30,7 +30,7 @@ echo.
 if not exist "%REQ_FILE%" (
     echo ERROR: requirements.txt not found:
     echo %REQ_FILE%
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -69,7 +69,7 @@ if not defined BASE_PY (
           "Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_TEMP%'"
         if errorlevel 1 (
             echo ERROR: Failed to download Python installer.
-            pause
+            call :maybe_pause
             exit /b 1
         )
         set "PYTHON_SOURCE=%PYTHON_TEMP%"
@@ -80,7 +80,7 @@ if not defined BASE_PY (
     "!PYTHON_SOURCE!" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1
     if errorlevel 1 (
         echo ERROR: Python installation failed.
-        pause
+        call :maybe_pause
         exit /b 1
     )
 
@@ -104,7 +104,7 @@ if not defined BASE_PY (
 
 if not defined BASE_PY (
     echo ERROR: Python is still not available after installation.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -123,7 +123,7 @@ if not exist "%VENV_PY%" (
     call "%BASE_PY%" %BASE_PY_ARGS% -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo ERROR: Failed to create virtual environment.
-        pause
+        call :maybe_pause
         exit /b 1
     )
 ) else (
@@ -133,7 +133,7 @@ if not exist "%VENV_PY%" (
 if not exist "%VENV_PY%" (
     echo ERROR: Virtual environment python was not created:
     echo %VENV_PY%
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -141,7 +141,7 @@ echo Upgrading pip, please wait...
 call "%VENV_PY%" -m pip install --upgrade pip
 if errorlevel 1 (
     echo ERROR: Failed to upgrade pip.
-    pause
+    call :maybe_pause
     exit /b 1
 )
 
@@ -157,7 +157,7 @@ if errorlevel 1 (
             echo Check that "%WHEEL_DIR%" contains compatible wheels for:
             echo   - flask
             echo   - pygame
-            pause
+            call :maybe_pause
             exit /b 1
         )
         echo Installed requirements from offline wheelhouse.
@@ -172,7 +172,7 @@ if errorlevel 1 (
         echo    py -3.13 -m pip download -r requirements.txt -d bin\windows\wheels
         echo 2^) Copy the project (including bin\windows\wheels^) to this machine.
         echo 3^) Run Install.bat again.
-        pause
+        call :maybe_pause
         exit /b 1
     )
 )
@@ -187,7 +187,7 @@ if not exist "%MEDIAMTX_EXE%" (
     echo WARNING: MediaMTX not found:
     echo %MEDIAMTX_EXE%
     echo Python setup completed, but MediaMTX is missing.
-    pause
+    call :maybe_pause
     exit /b 0
 )
 
@@ -195,5 +195,11 @@ echo.
 echo Install completed successfully.
 echo Next step: run scripts\windows\StartControl.bat
 echo.
+call :maybe_pause
+exit /b 0
+
+:maybe_pause
+rem When set (e.g. by ControlCenterGui.ps1), skip pause so the GUI is not blocked
+if /I "%CONTROL_NONINTERACTIVE%"=="1" exit /b 0
 pause
 exit /b 0
