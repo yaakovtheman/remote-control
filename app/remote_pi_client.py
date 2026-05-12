@@ -102,6 +102,76 @@ BTN_KEYON     = 1 << 4
 BTN_KEYSTART  = 1 << 5
 BTN_ES        = 1 << 6
 
+# ==== Speed button pulse state machine ====
+# Each physical press queues one pulse: HIGH for _SPD_HIGH_FRAMES, then LOW for
+# _SPD_LOW_FRAMES. The LOW gap ensures the Arduino sees a falling edge before the
+# next press, so N rapid clicks produce N distinct rising edges.
+_SPD_HIGH_FRAMES = 2   # at 20 Hz: 2 × 50 ms = 100 ms HIGH
+_SPD_LOW_FRAMES  = 1   # 1 × 50 ms LOW gap between pulses
+_SPD_QUEUE_MAX   = 8   # ignore unreasonably large bursts
+
+_spd_up_queue = 0
+_spd_dn_queue = 0
+_spd_up_state = 'idle'  # 'idle' | 'high' | 'low'
+_spd_up_left  = 0
+_spd_dn_state = 'idle'
+_spd_dn_left  = 0
+_hat_prev_xy  = (0, 0)
+
+
+def _spd_tick(queue, state, left):
+    """Advance speed-pulse state machine one frame.
+    Returns (bit_active, new_queue, new_state, new_left)."""
+    if state == 'idle':
+        if queue > 0:
+            return True, queue - 1, 'high', _SPD_HIGH_FRAMES - 1
+        return False, 0, 'idle', 0
+    if state == 'high':
+        if left > 0:
+            return True, queue, 'high', left - 1
+        return False, queue, 'low', _SPD_LOW_FRAMES - 1
+    # state == 'low'
+    if left > 0:
+        return False, queue, 'low', left - 1
+    if queue > 0:
+        return True, queue - 1, 'high', _SPD_HIGH_FRAMES - 1
+    return False, 0, 'idle', 0
+
+
+def reset_spd_queues():
+    global _spd_up_queue, _spd_dn_queue
+    global _spd_up_state, _spd_dn_state
+    global _spd_up_left, _spd_dn_left
+    global _hat_prev_xy
+    _spd_up_queue = _spd_dn_queue = 0
+    _spd_up_state = _spd_dn_state = 'idle'
+    _spd_up_left = _spd_dn_left = 0
+    _hat_prev_xy = (0, 0)
+
+
+def _hat_matches(hx, hy, direction):
+    if direction == 0: return hy > 0
+    if direction == 1: return hy < 0
+    if direction == 2: return hx > 0
+    if direction == 3: return hx < 0
+    return False
+
+
+def _hat_spd_enqueue(hx, hy):
+    """Queue one speed pulse when hat transitions to a speed direction."""
+    global _hat_prev_xy, _spd_up_queue, _spd_dn_queue
+    px, py = _hat_prev_xy
+    if HAT_SPDUP_DIR >= 0:
+        if _hat_matches(hx, hy, HAT_SPDUP_DIR) and not _hat_matches(px, py, HAT_SPDUP_DIR):
+            if _spd_up_queue < _SPD_QUEUE_MAX:
+                _spd_up_queue += 1
+    if HAT_SPDDN_DIR >= 0:
+        if _hat_matches(hx, hy, HAT_SPDDN_DIR) and not _hat_matches(px, py, HAT_SPDDN_DIR):
+            if _spd_dn_queue < _SPD_QUEUE_MAX:
+                _spd_dn_queue += 1
+    _hat_prev_xy = (hx, hy)
+
+
 # ==== Helpers ====
 def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
@@ -163,13 +233,28 @@ def joystick_present_now():
     except Exception:
         return False
 
-def safe_read_inputs(js):
+def safe_read_inputs(js, conn_start_ms=None):
     """
     Returns (line_bytes, ok, joy_name, inputs)
     ok=False means joystick is gone/broken.
+    conn_start_ms: int(time.time()*1000) at the moment the TCP socket connected.
+    When provided, SET commands carry ms-elapsed-since-connect so the Pi can
+    detect stale buffered commands without requiring clock sync.
     """
     try:
-        pygame.event.pump()
+        global _spd_up_queue, _spd_dn_queue, _spd_up_state, _spd_dn_state, _spd_up_left, _spd_dn_left
+
+        # Drain the event queue. Capture speed-button JOYBUTTONDOWN events for
+        # edge detection; hat speed transitions go through _hat_spd_enqueue.
+        # event.get() also updates js.get_button() state for other inputs.
+        for ev in pygame.event.get():
+            if ev.type == pygame.JOYBUTTONDOWN:
+                if ev.button == BTN_SPDUP_IN and _spd_up_queue < _SPD_QUEUE_MAX:
+                    _spd_up_queue += 1
+                elif ev.button == BTN_SPDDN_IN and _spd_dn_queue < _SPD_QUEUE_MAX:
+                    _spd_dn_queue += 1
+            elif ev.type == pygame.JOYHATMOTION:
+                _hat_spd_enqueue(*ev.value)
 
         # If the OS says no joystick, treat as disconnected immediately
         if not joystick_present_now():
@@ -192,6 +277,7 @@ def safe_read_inputs(js):
 
         # E-STOP?
         if js.get_button(BTN_ESTOP) == 1:
+            reset_spd_queues()
             return b"STOP\n", True, js.get_name(), {
                 "estop_pressed": True,
                 "hat": js.get_hat(0) if js.get_numhats() > 0 else None,
@@ -200,8 +286,15 @@ def safe_read_inputs(js):
             }
 
         buttons = 0
-        if js.get_button(BTN_SPDUP_IN): buttons |= BTN_SPDUP
-        if js.get_button(BTN_SPDDN_IN): buttons |= BTN_SPDDN
+
+        # Advance speed-pulse state machine (queued by JOYBUTTONDOWN / hat events above)
+        up_bit, _spd_up_queue, _spd_up_state, _spd_up_left = _spd_tick(
+            _spd_up_queue, _spd_up_state, _spd_up_left)
+        dn_bit, _spd_dn_queue, _spd_dn_state, _spd_dn_left = _spd_tick(
+            _spd_dn_queue, _spd_dn_state, _spd_dn_left)
+        if up_bit: buttons |= BTN_SPDUP
+        if dn_bit: buttons |= BTN_SPDDN
+
         if js.get_button(BTN_PARK_IN): buttons |= BTN_PARK
         if js.get_button(BTN_KEYON_IN): buttons |= BTN_KEYON
         if js.get_button(BTN_KEYSTART_IN): buttons |= BTN_KEYSTART
@@ -213,16 +306,6 @@ def safe_read_inputs(js):
             hx, hy = js.get_hat(0)
             hat = [hx, hy]
 
-            if HAT_SPDUP_DIR == 0 and hy > 0: buttons |= BTN_SPDUP
-            if HAT_SPDUP_DIR == 1 and hy < 0: buttons |= BTN_SPDUP
-            if HAT_SPDUP_DIR == 2 and hx > 0: buttons |= BTN_SPDUP
-            if HAT_SPDUP_DIR == 3 and hx < 0: buttons |= BTN_SPDUP
-
-            if HAT_SPDDN_DIR == 0 and hy > 0: buttons |= BTN_SPDDN
-            if HAT_SPDDN_DIR == 1 and hy < 0: buttons |= BTN_SPDDN
-            if HAT_SPDDN_DIR == 2 and hx > 0: buttons |= BTN_SPDDN
-            if HAT_SPDDN_DIR == 3 and hx < 0: buttons |= BTN_SPDDN
-
             if HAT_IMPL_DIR == 0 and hy > 0: buttons |= BTN_IMPL
             if HAT_IMPL_DIR == 1 and hy < 0: buttons |= BTN_IMPL
             if HAT_IMPL_DIR == 2 and hx > 0: buttons |= BTN_IMPL
@@ -233,7 +316,11 @@ def safe_read_inputs(js):
             if HAT_PARK_DIR == 2 and hx > 0: buttons |= BTN_PARK
             if HAT_PARK_DIR == 3 and hx < 0: buttons |= BTN_PARK
 
-        line = f"SET {lift} {tilt} {drive} {steer} {buttons}\n".encode()
+        if conn_start_ms is not None:
+            elapsed_ms = int(time.time() * 1000) - conn_start_ms
+            line = f"SET {lift} {tilt} {drive} {steer} {buttons} {elapsed_ms}\n".encode()
+        else:
+            line = f"SET {lift} {tilt} {drive} {steer} {buttons}\n".encode()
         return line, True, js.get_name(), {
             "estop_pressed": False,
             "hat": hat,
@@ -259,6 +346,7 @@ def main():
 
     js = init_joystick()
     sock = connect_tcp()
+    conn_start_ms = int(time.time() * 1000) if sock is not None else None
 
     tcp_connected = (sock is not None)
     last_tcp_error = None
@@ -296,7 +384,7 @@ def main():
                 joy_connected = False
                 joy_name = None
             else:
-                line, ok, nm, inputs = safe_read_inputs(js)
+                line, ok, nm, inputs = safe_read_inputs(js, conn_start_ms)
                 if not ok:
                     print("[joy] disconnected -> sending STOP and waiting for reconnect")
                     js = None
@@ -304,6 +392,7 @@ def main():
                     joy_connected = False
                     joy_name = None
                     last_inputs = None
+                    reset_spd_queues()
                 else:
                     joy_connected = True
                     joy_name = nm
@@ -354,6 +443,7 @@ def main():
                 except:
                     pass
                 sock = connect_tcp()
+                conn_start_ms = int(time.time() * 1000) if sock is not None else None
                 tcp_connected = (sock is not None)
                 try:
                     if sock is not None:
