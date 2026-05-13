@@ -117,6 +117,8 @@ _spd_up_left  = 0
 _spd_dn_state = 'idle'
 _spd_dn_left  = 0
 _hat_prev_xy  = (0, 0)
+_spdup_prev   = False   # previous frame button state for rising-edge detection
+_spddn_prev   = False
 
 
 def _spd_tick(queue, state, left):
@@ -142,11 +144,12 @@ def reset_spd_queues():
     global _spd_up_queue, _spd_dn_queue
     global _spd_up_state, _spd_dn_state
     global _spd_up_left, _spd_dn_left
-    global _hat_prev_xy
+    global _hat_prev_xy, _spdup_prev, _spddn_prev
     _spd_up_queue = _spd_dn_queue = 0
     _spd_up_state = _spd_dn_state = 'idle'
     _spd_up_left = _spd_dn_left = 0
     _hat_prev_xy = (0, 0)
+    _spdup_prev = _spddn_prev = False
 
 
 def _hat_matches(hx, hy, direction):
@@ -243,22 +246,13 @@ def safe_read_inputs(js, conn_start_ms=None):
     """
     try:
         global _spd_up_queue, _spd_dn_queue, _spd_up_state, _spd_dn_state, _spd_up_left, _spd_dn_left
+        global _spdup_prev, _spddn_prev
 
-        # Drain the event queue. Capture speed-button JOYBUTTONDOWN events for
-        # edge detection; hat speed transitions go through _hat_spd_enqueue.
-        # event.get() also updates js.get_button() state for other inputs.
-        for ev in pygame.event.get():
-            if ev.type == pygame.JOYBUTTONDOWN:
-                if ev.button == BTN_SPDUP_IN and _spd_up_queue < _SPD_QUEUE_MAX:
-                    _spd_up_queue += 1
-                elif ev.button == BTN_SPDDN_IN and _spd_dn_queue < _SPD_QUEUE_MAX:
-                    _spd_dn_queue += 1
-            elif ev.type == pygame.JOYHATMOTION:
-                _hat_spd_enqueue(*ev.value)
-
-        # If the OS says no joystick, treat as disconnected immediately
-        if not joystick_present_now():
-            return b"STOP\n", False, None, None
+        # pump() keeps SDL's internal state fresh without draining the event queue.
+        # event.get() was previously used here but caused SDL2 on macOS to surface
+        # JOYDEVICEREMOVED events (IOKit re-enumeration), which invalidated the
+        # joystick handle and produced spurious STOP commands.
+        pygame.event.pump()
 
         steer_raw = js.get_axis(AXIS_STEER)
         drive_raw = js.get_axis(AXIS_DRIVE)
@@ -287,7 +281,17 @@ def safe_read_inputs(js, conn_start_ms=None):
 
         buttons = 0
 
-        # Advance speed-pulse state machine (queued by JOYBUTTONDOWN / hat events above)
+        # Rising-edge detection for speed buttons via state polling.
+        spdup_now = bool(js.get_button(BTN_SPDUP_IN))
+        spddn_now = bool(js.get_button(BTN_SPDDN_IN))
+        if spdup_now and not _spdup_prev and _spd_up_queue < _SPD_QUEUE_MAX:
+            _spd_up_queue += 1
+        if spddn_now and not _spddn_prev and _spd_dn_queue < _SPD_QUEUE_MAX:
+            _spd_dn_queue += 1
+        _spdup_prev = spdup_now
+        _spddn_prev = spddn_now
+
+        # Advance speed-pulse state machine
         up_bit, _spd_up_queue, _spd_up_state, _spd_up_left = _spd_tick(
             _spd_up_queue, _spd_up_state, _spd_up_left)
         dn_bit, _spd_dn_queue, _spd_dn_state, _spd_dn_left = _spd_tick(
@@ -305,6 +309,8 @@ def safe_read_inputs(js, conn_start_ms=None):
         if js.get_numhats() > 0:
             hx, hy = js.get_hat(0)
             hat = [hx, hy]
+
+            _hat_spd_enqueue(hx, hy)  # rising-edge detection via _hat_prev_xy
 
             if HAT_IMPL_DIR == 0 and hy > 0: buttons |= BTN_IMPL
             if HAT_IMPL_DIR == 1 and hy < 0: buttons |= BTN_IMPL

@@ -1,5 +1,5 @@
 {
-  "server_ip": "dozer.local",
+  "server_ip": "192.192.168.14",
   "server_port": 7000,
   "send_hz": 20,
   "deadzone": 0.05,
@@ -23,11 +23,9 @@
   "hat_speed_down_dir": 1,
   "hat_impl_dir": 2,
   "hat_park_dir": 3,
-  "known_camera_ips": [
-    "192.168.10.172",
-    "192.168.10.228"
-  ],
+  "known_camera_ips": [],
   "preferred_subnets": [
+    "192.192.168.0/24",
     "192.168.10.0/24"
   ]
 }

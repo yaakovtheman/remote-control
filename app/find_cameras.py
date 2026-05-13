@@ -240,6 +240,7 @@ def get_hosts(preferred_ips=None, preferred_subnets=None):
 
     # Then scan the most common fallback camera subnets
     for cidr in [
+        "192.192.168.0/24",
         "192.168.10.0/24",
         "192.168.0.0/24",
         "192.168.1.0/24",
