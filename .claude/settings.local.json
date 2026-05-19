@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xxd /Users/jacob/dev/idf/control/scripts/windows/StartControl.bat)",
+      "Bash(xxd /Users/jacob/dev/idf/control/scripts/windows/ControlCenter.bat)",
+      "Bash(xxd /Users/jacob/dev/idf/control/scripts/windows/build_mediamtx.ps1)",
+      "Bash(git *)",
+      "Bash(python3 *)"
+    ]
+  }
+}

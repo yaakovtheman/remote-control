@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-  מרכז שליטה — ממשק WinForms להפעלת סקריפטי ה- BAT הקיימים.
+  מרכז שליטה  -  ממשק WinForms להפעלת סקריפטי ה- BAT הקיימים.
 
   קיצור דרך בשולחן העבודה (Desktop shortcut):
     Target:
@@ -12,7 +12,7 @@
   הרצה ידנית:
     powershell.exe -ExecutionPolicy Bypass -File ControlCenterGui.ps1
 
-  הסקריפט מגדיר CONTROL_NONINTERACTIVE=1 לתהליך cmd — קבצי ה- BAT מדלגים על pause
+  הסקריפט מגדיר CONTROL_NONINTERACTIVE=1 לתהליך cmd  -  קבצי ה- BAT מדלגים על pause
   (התנהגות רגילה בלחיצה כפולה על ה- BAT לא משתנה).
 #>
 
@@ -84,7 +84,8 @@ function Invoke-ControlBat {
     [System.Windows.Forms.TextBox]$OutBox,
     [System.Windows.Forms.Form]$Form,
     [System.Windows.Forms.Button[]]$Buttons,
-    [bool]$ManageButtons = $true
+    [bool]$ManageButtons = $true,
+    [string]$ExtraArgs = ''
   )
 
   $batPath = Join-Path $ScriptRoot $BatchFileName
@@ -95,11 +96,13 @@ function Invoke-ControlBat {
   if ($ManageButtons) {
     Set-ButtonsEnabled -Enabled $false -Buttons $Buttons
   }
-  Append-UiLog -Box $OutBox -Form $Form -Text ("========== " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " :: " + $BatchFileName + " ==========")
+  $label = if ($ExtraArgs) { $BatchFileName + ' ' + $ExtraArgs } else { $BatchFileName }
+  Append-UiLog -Box $OutBox -Form $Form -Text ("========== " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " :: " + $label + " ==========")
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = 'cmd.exe'
-  $psi.Arguments = '/c call "' + $batPath + '"'
+  $cmdArgs = if ($ExtraArgs) { '/c call "' + $batPath + '" ' + $ExtraArgs } else { '/c call "' + $batPath + '"' }
+  $psi.Arguments = $cmdArgs
   $psi.WorkingDirectory = $RootDir
   $psi.UseShellExecute = $false
   $psi.EnvironmentVariables['CONTROL_NONINTERACTIVE'] = '1'
@@ -165,7 +168,7 @@ function Invoke-ControlBat {
     $tail = if ($full.Length -gt 800) { $full.Substring($full.Length - 800) } else { $full }
     if (($len -gt 40) -and (([DateTime]::UtcNow - $stall).TotalMilliseconds -gt 900)) {
       if (Test-PausePromptTail -Tail $tail) {
-        Append-UiLog -Box $OutBox -Form $Form -Text '[ממשק] זוהתה בקשת Enter בסוף הסקריפט — סוגרים אוטומטית כדי לא לנעול את החלון.'
+        Append-UiLog -Box $OutBox -Form $Form -Text '[ממשק] זוהתה בקשת Enter בסוף הסקריפט  -  סוגרים אוטומטית כדי לא לנעול את החלון.'
         try { $proc.Kill() } catch { }
         break
       }
@@ -265,7 +268,7 @@ $lblState.AutoSize = $false
 $lblState.Dock = [System.Windows.Forms.DockStyle]::Top
 $lblState.Height = 26
 $lblState.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
-$lblState.Text = 'מצב: —'
+$lblState.Text = 'מצב:  - '
 
 $lblPorts = New-Object System.Windows.Forms.Label
 $lblPorts.AutoSize = $false
@@ -273,7 +276,7 @@ $lblPorts.Dock = [System.Windows.Forms.DockStyle]::Top
 $lblPorts.Height = 36
 $lblPorts.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
 $lblPorts.ForeColor = [System.Drawing.Color]::DimGray
-$lblPorts.Text = 'פורטים: —'
+$lblPorts.Text = 'פורטים:  - '
 
 $lblUrl = New-Object System.Windows.Forms.Label
 $lblUrl.AutoSize = $false
@@ -305,20 +308,24 @@ function New-BarButton {
   return $b
 }
 
-$btnInstall = New-BarButton 'התקנה' 140
-$btnStart = New-BarButton 'הפעלה' 140
-$btnStop = New-BarButton 'עצירה' 140
-$btnRestart = New-BarButton 'הפעלה מחדש' 160
-$btnStatus = New-BarButton 'מצב' 120
-$btnCleanup = New-BarButton 'ניקוי' 130
-$btnBrowser = New-BarButton 'פתיחת מערכת' 170
+$btnInstall      = New-BarButton 'התקנה' 140
+$btnQuickStart   = New-BarButton 'הפעלה מהירה' 160
+$btnStart        = New-BarButton 'הפעלה מלאה' 160
+$btnStop         = New-BarButton 'עצירה' 140
+$btnRestart      = New-BarButton 'הפעלה מחדש מהירה' 200
+$btnRestartFull  = New-BarButton 'הפעלה מחדש מלאה' 200
+$btnStatus       = New-BarButton 'מצב' 120
+$btnCleanup      = New-BarButton 'ניקוי' 130
+$btnBrowser      = New-BarButton 'פתיחת מערכת' 170
 
 $btnPanel.Controls.Add($btnBrowser)
 $btnPanel.Controls.Add($btnCleanup)
 $btnPanel.Controls.Add($btnStatus)
+$btnPanel.Controls.Add($btnRestartFull)
 $btnPanel.Controls.Add($btnRestart)
 $btnPanel.Controls.Add($btnStop)
 $btnPanel.Controls.Add($btnStart)
+$btnPanel.Controls.Add($btnQuickStart)
 $btnPanel.Controls.Add($btnInstall)
 
 $split = New-Object System.Windows.Forms.Panel
@@ -347,11 +354,11 @@ $form.Controls.Add($split)
 $form.Controls.Add($btnPanel)
 $form.Controls.Add($topPanel)
 
-$allButtons = @($btnInstall, $btnStart, $btnStop, $btnRestart, $btnStatus, $btnCleanup, $btnBrowser)
+$allButtons = @($btnInstall, $btnQuickStart, $btnStart, $btnStop, $btnRestart, $btnRestartFull, $btnStatus, $btnCleanup, $btnBrowser)
 
 $refreshStatus = {
   $s = Get-ServiceSummary
-  $lblState.Text = ('מצב: ' + $s.State + ' — ' + $s.Detail)
+  $lblState.Text = ('מצב: ' + $s.State + '  -  ' + $s.Detail)
   $p = Get-PortSnippet
   if ([string]::IsNullOrWhiteSpace($p)) {
     $lblPorts.Text = 'פורטים: אין האזנה מזוהה ב-8088 (או netstat לא זמין)'
@@ -369,6 +376,7 @@ $form.Add_Shown({ & $refreshStatus; $timer.Start() })
 $form.Add_FormClosed({ $timer.Stop(); $timer.Dispose() })
 
 $btnInstall.Add_Click({ Invoke-ControlBat -BatchFileName 'Install.bat' -OutBox $output -Form $form -Buttons $allButtons })
+$btnQuickStart.Add_Click({ Invoke-ControlBat -BatchFileName 'StartControl.bat' -ExtraArgs '--no-scan' -OutBox $output -Form $form -Buttons $allButtons })
 $btnStart.Add_Click({ Invoke-ControlBat -BatchFileName 'StartControl.bat' -OutBox $output -Form $form -Buttons $allButtons })
 $btnStop.Add_Click({ Invoke-ControlBat -BatchFileName 'StopControl.bat' -OutBox $output -Form $form -Buttons $allButtons })
 $btnStatus.Add_Click({ Invoke-ControlBat -BatchFileName 'Status.bat' -OutBox $output -Form $form -Buttons $allButtons })
@@ -377,7 +385,20 @@ $btnCleanup.Add_Click({ Invoke-ControlBat -BatchFileName 'CleanupControl.bat' -O
 $btnRestart.Add_Click({
   Set-ButtonsEnabled -Enabled $false -Buttons $allButtons
   try {
-    Append-UiLog -Box $output -Form $form -Text ("========== " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " :: הפעלה מחדש (עצירה → המתנה → הפעלה) ==========")
+    Append-UiLog -Box $output -Form $form -Text ("========== " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " :: הפעלה מחדש מהירה (עצירה → המתנה → הפעלה מהירה) ==========")
+    Invoke-ControlBat -BatchFileName 'StopControl.bat' -OutBox $output -Form $form -Buttons $allButtons -ManageButtons $false
+    Start-Sleep -Seconds 2
+    Invoke-ControlBat -BatchFileName 'StartControl.bat' -ExtraArgs '--no-scan' -OutBox $output -Form $form -Buttons $allButtons -ManageButtons $false
+  }
+  finally {
+    Set-ButtonsEnabled -Enabled $true -Buttons $allButtons
+  }
+})
+
+$btnRestartFull.Add_Click({
+  Set-ButtonsEnabled -Enabled $false -Buttons $allButtons
+  try {
+    Append-UiLog -Box $output -Form $form -Text ("========== " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + " :: הפעלה מחדש מלאה (עצירה → המתנה → סריקה → הפעלה) ==========")
     Invoke-ControlBat -BatchFileName 'StopControl.bat' -OutBox $output -Form $form -Buttons $allButtons -ManageButtons $false
     Start-Sleep -Seconds 2
     Invoke-ControlBat -BatchFileName 'StartControl.bat' -OutBox $output -Form $form -Buttons $allButtons -ManageButtons $false

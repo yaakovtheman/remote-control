@@ -5,11 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 LOCAL_MODE=0
+NO_SCAN_MODE=0
 for arg in "$@"; do
   case "$arg" in
-    --local)
-      LOCAL_MODE=1
-      ;;
+    --local)   LOCAL_MODE=1   ;;
+    --no-scan) NO_SCAN_MODE=1 ;;
   esac
 done
 
@@ -25,6 +25,7 @@ CONFIG_JSON="$APP_DIR/config.json"
 
 CAM_USER="admin"
 CAM_PASS="Aa123456!"
+CAM_PROFILE="2"
 PI_IP=""
 CAM_COUNT="0"
 SUBNETS="unknown"
@@ -90,6 +91,69 @@ if [[ "$LOCAL_MODE" -eq 1 ]]; then
     echo "paths: {}" > "$MEDIAMTX_CFG"
     warn "mediamtx.yml missing, created fallback config"
   fi
+elif [[ "$NO_SCAN_MODE" -eq 1 ]]; then
+  step "No-scan mode (--no-scan): using saved values from config.json"
+
+  PI_IP="$("$VENV_PY" -c 'import json, pathlib; p=pathlib.Path("'"$CONFIG_JSON"'"); print(json.loads(p.read_text(encoding="utf-8")).get("server_ip",""))' 2>/dev/null || true)"
+  if [[ -n "$PI_IP" ]]; then
+    ok "Pi IP: $PI_IP"
+  else
+    warn "No Pi IP saved in config.json"
+  fi
+
+  SCAN_SUMMARY="$(
+    "$VENV_PY" - "$MEDIAMTX_CFG" "$CAM_USER" "$CAM_PASS" "$CONFIG_JSON" <<'PY'
+import json, pathlib, sys
+
+cfg_path   = pathlib.Path(sys.argv[1])
+user       = sys.argv[2]
+pw         = sys.argv[3]
+config_path = pathlib.Path(sys.argv[4])
+
+cfg = {}
+try:
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+except Exception:
+    pass
+
+ips = [str(ip) for ip in (cfg.get("known_camera_ips") or []) if ip]
+profile = int(cfg.get("camera_profile", 2))
+if profile not in (1, 2):
+    profile = 2
+
+header = ["readTimeout: 10s", "writeTimeout: 10s", "webrtcAllowOrigin: '*'", ""]
+lines = header + ["paths:"]
+i = 1
+for ip in ips:
+    lines.extend([
+        f"  cam{i}:",
+        f"    source: rtsp://{user}:{pw}@{ip}:554/profile{profile}",
+        "    rtspTransport: tcp",
+    ])
+    i += 1
+
+count = i - 1
+if count == 0:
+    cfg_path.write_text("\n".join(header) + "\npaths: {}\n", encoding="utf-8")
+else:
+    cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+print(f"CAM_COUNT={count}")
+PY
+  )"
+
+  while IFS='=' read -r k v; do
+    [[ -z "${k:-}" ]] && continue
+    case "$k" in
+      CAM_COUNT) CAM_COUNT="$v" ;;
+    esac
+  done <<< "$SCAN_SUMMARY"
+
+  if [[ "$CAM_COUNT" == "0" ]]; then
+    warn "No saved camera IPs in config.json — run a full scan first to populate them"
+  else
+    ok "MediaMTX config built from $CAM_COUNT saved camera IP(s)"
+  fi
 else
   SUBNETS="$("$VENV_PY" -c 'import pathlib, sys; sys.path.insert(0, str(pathlib.Path("'"$APP_DIR"'"))); import find_cameras as fc; _, nets, _ = fc.get_hosts(); print(", ".join(nets) if nets else "unknown")' 2>/dev/null || echo "unknown")"
 
@@ -109,6 +173,9 @@ else
     warn "No Pi IP found in config.json"
   fi
 
+  CAM_PROFILE="$("$VENV_PY" -c "import json, pathlib; cfg=json.loads(pathlib.Path('${CONFIG_JSON}').read_text()); p=int(cfg.get('camera_profile', 2)); print(p if p in (1,2) else 2)" 2>/dev/null || echo 2)"
+  info "Camera profile: profile${CAM_PROFILE}"
+
   step "Scan cameras and build mediamtx.yml"
   IFS=',' read -ra CAM_SUBNET_LIST <<< "$SUBNETS"
   for subnet in "${CAM_SUBNET_LIST[@]}"; do
@@ -119,7 +186,7 @@ else
   CAM_SCAN_RAW="$("$VENV_PY" "$FIND_CAMERAS_PY" --cam 2>/dev/null || true)"
 
   SCAN_SUMMARY="$(
-    CAM_SCAN_RAW_JSON="$CAM_SCAN_RAW" "$VENV_PY" - "$MEDIAMTX_CFG" "$CAM_USER" "$CAM_PASS" <<'PY'
+    CAM_SCAN_RAW_JSON="$CAM_SCAN_RAW" "$VENV_PY" - "$MEDIAMTX_CFG" "$CAM_USER" "$CAM_PASS" "$CAM_PROFILE" <<'PY'
 import json, os, pathlib, sys
 
 cfg_path = pathlib.Path(sys.argv[1])
@@ -142,7 +209,12 @@ if isinstance(data, dict):
     subnets = data.get("subnets", []) or []
     cams = data.get("cameras", []) or []
 
-lines = ["paths:"]
+profile = int(sys.argv[4]) if len(sys.argv) > 4 else 2
+if profile not in (1, 2):
+    profile = 2
+
+header = ["readTimeout: 10s", "writeTimeout: 10s", "webrtcAllowOrigin: '*'", ""]
+lines = header + ["paths:"]
 i = 1
 for cam in cams:
     ip = cam.get("ip")
@@ -150,14 +222,14 @@ for cam in cams:
         continue
     lines.extend([
         f"  cam{i}:",
-        f"    source: rtsp://{user}:{pw}@{ip}:554/profile2",
+        f"    source: rtsp://{user}:{pw}@{ip}:554/profile{profile}",
         "    rtspTransport: tcp",
     ])
     i += 1
 
 count = i - 1
 if count == 0:
-    cfg_path.write_text("paths: {}\n", encoding="utf-8")
+    cfg_path.write_text("\n".join(header) + "\npaths: {}\n", encoding="utf-8")
 else:
     cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

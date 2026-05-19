@@ -11,6 +11,7 @@ set "PID_DIR=%LOG_DIR%\pids"
 set "VENV_PY=%ROOT_DIR%\.venv\Scripts\python.exe"
 set "MEDIAMTX_EXE=%ROOT_DIR%\bin\windows\mediamtx.exe"
 set "MEDIAMTX_CFG=%APP_DIR%\mediamtx.yml"
+set "WATCHDOG_PS1=%ROOT_DIR%\scripts\windows\WatchdogMediaMTX.ps1"
 set "FIND_CAMERAS_PY=%APP_DIR%\find_cameras.py"
 set "REMOTE_PI_PY=%APP_DIR%\remote_pi_client.py"
 set "SETTINGS_PY=%APP_DIR%\settings_server.py"
@@ -22,6 +23,7 @@ set "CAM_COUNT=0"
 set "SUBNETS=unknown"
 set "TARGET_URL="
 set "VISIBLE_MODE=0"
+set "NO_SCAN_MODE=0"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 if not exist "%PID_DIR%" mkdir "%PID_DIR%"
@@ -30,8 +32,20 @@ if /I "%~1"=="--status" goto :status
 if /I "%~1"=="--stop" goto :stop
 if /I "%~1"=="--cleanup" goto :cleanup
 if /I "%~1"=="--visible" set "VISIBLE_MODE=1"
+if /I "%~1"=="--no-scan" set "NO_SCAN_MODE=1"
+if /I "%~2"=="--no-scan" set "NO_SCAN_MODE=1"
 
 call :banner
+call :step "Firewall check"
+netsh advfirewall firewall show rule name="IDF MediaMTX WebRTC" >nul 2>&1
+if errorlevel 1 (
+    call :warn "MediaMTX firewall rule not found - camera streams may fail from the Pi"
+    call :warn "Run Install.bat as Administrator to add the rule automatically"
+    call :warn "Or: run as admin once: netsh advfirewall firewall add rule name=""IDF MediaMTX WebRTC"" dir=in action=allow protocol=TCP localport=8889 profile=any"
+) else (
+    call :ok "Firewall rule present"
+)
+
 call :step "Environment checks"
 if not exist "%VENV_PY%" call :fail_with "venv python not found: %VENV_PY%"
 if not exist "%SETTINGS_PY%" call :fail_with "settings_server.py not found: %SETTINGS_PY%"
@@ -48,30 +62,47 @@ del /q "%LOG_DIR%\mediamtx.log" 2>nul
 del /q "%APP_DIR%\status.json" 2>nul
 del /q "%SCAN_JSON%" 2>nul
 
-call :step "Find Raspberry Pi and update config.json"
-call :pulse "Running Pi scan"
-"%VENV_PY%" "%FIND_CAMERAS_PY%" --pi --pretty
-if errorlevel 1 (call :warn "Pi scan returned error, continuing")
+if "%NO_SCAN_MODE%"=="1" (
+    call :step "No-scan: loading saved values from config.json"
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip) { [string]$cfg.server_ip }"`) do set "PI_IP=%%I"
+    if defined PI_IP (call :ok "Pi IP: !PI_IP!") else (call :warn "No Pi IP saved in config.json")
 
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip) { [string]$cfg.server_ip }"`) do set "PI_IP=%%I"
-if defined PI_IP (call :ok "Pi IP: !PI_IP!") else (call :warn "No Pi IP in config.json")
-
-call :step "Scan cameras and build mediamtx.yml"
-call :pulse "Searching cameras in network"
-"%VENV_PY%" "%FIND_CAMERAS_PY%" --cam > "%SCAN_JSON%"
-if errorlevel 1 (
-    call :warn "Camera scan failed - writing fallback config"
-    > "%MEDIAMTX_CFG%" echo paths: {}
-    if errorlevel 1 call :fail_with "Failed to create fallback mediamtx.yml"
-    set "CAM_COUNT=0"
-) else (
-    for /f "usebackq delims=" %%C in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($null -ne $d.count) { [string]$d.count } else { '0' }"`) do set "CAM_COUNT=%%C"
-    for /f "usebackq delims=" %%S in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($d.subnets -and $d.subnets.Count -gt 0) { ($d.subnets -join ', ') } else { 'unknown' }"`) do set "SUBNETS=%%S"
-    call :info "Checked subnets: !SUBNETS!"
-    call :info "Found !CAM_COUNT! cameras"
+    call :info "Building mediamtx.yml from saved camera IPs"
+    powershell -NoProfile -Command "$cfg = Get-Content -Raw -LiteralPath '%CONFIG_JSON%' | ConvertFrom-Json; $ips = @(); if ($null -ne $cfg.known_camera_ips) { $ips = @($cfg.known_camera_ips | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) }; $cams = $ips | ForEach-Object { [PSCustomObject]@{ip=[string]$_} }; ([PSCustomObject]@{cameras=$cams; count=$cams.Count; subnets=@()}) | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath '%SCAN_JSON%' -Encoding UTF8"
     powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\windows\build_mediamtx.ps1" "%SCAN_JSON%" "%CONFIG_JSON%" "%MEDIAMTX_CFG%"
     if errorlevel 1 call :fail_with "Failed to build mediamtx.yml"
-    powershell -NoProfile -Command "$content = Get-Content -Path '%MEDIAMTX_CFG%' -Raw; if ([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'cam\d+:') { Set-Content -Path '%MEDIAMTX_CFG%' -Value \"paths: {}`r`n\" -Encoding UTF8 }"
+    for /f "usebackq delims=" %%C in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($null -ne $d.count) { [string]$d.count } else { '0' }"`) do set "CAM_COUNT=%%C"
+    if "!CAM_COUNT!"=="0" (
+        call :warn "No saved camera IPs in config.json  -  run full scan first to populate them"
+    ) else (
+        call :ok "MediaMTX config built from !CAM_COUNT! saved camera IP(s)"
+    )
+) else (
+    call :step "Find Raspberry Pi and update config.json"
+    call :pulse "Running Pi scan"
+    "%VENV_PY%" "%FIND_CAMERAS_PY%" --pi --pretty
+    if errorlevel 1 (call :warn "Pi scan returned error, continuing")
+
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip) { [string]$cfg.server_ip }"`) do set "PI_IP=%%I"
+    if defined PI_IP (call :ok "Pi IP: !PI_IP!") else (call :warn "No Pi IP in config.json")
+
+    call :step "Scan cameras and build mediamtx.yml"
+    call :pulse "Searching cameras in network"
+    "%VENV_PY%" "%FIND_CAMERAS_PY%" --cam > "%SCAN_JSON%"
+    if errorlevel 1 (
+        call :warn "Camera scan failed - writing fallback config"
+        > "%MEDIAMTX_CFG%" echo paths: {}
+        if errorlevel 1 call :fail_with "Failed to create fallback mediamtx.yml"
+        set "CAM_COUNT=0"
+    ) else (
+        for /f "usebackq delims=" %%C in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($null -ne $d.count) { [string]$d.count } else { '0' }"`) do set "CAM_COUNT=%%C"
+        for /f "usebackq delims=" %%S in (`powershell -NoProfile -Command "$d = Get-Content -Raw -Path '%SCAN_JSON%' | ConvertFrom-Json; if ($d.subnets -and $d.subnets.Count -gt 0) { ($d.subnets -join ', ') } else { 'unknown' }"`) do set "SUBNETS=%%S"
+        call :info "Checked subnets: !SUBNETS!"
+        call :info "Found !CAM_COUNT! cameras"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%\scripts\windows\build_mediamtx.ps1" "%SCAN_JSON%" "%CONFIG_JSON%" "%MEDIAMTX_CFG%"
+        if errorlevel 1 call :fail_with "Failed to build mediamtx.yml"
+        powershell -NoProfile -Command "$content = Get-Content -Path '%MEDIAMTX_CFG%' -Raw; if ([string]::IsNullOrWhiteSpace($content) -or $content -notmatch 'cam\d+:') { Set-Content -Path '%MEDIAMTX_CFG%' -Value \"paths: {}`r`n\" -Encoding UTF8 }"
+    )
 )
 
 call :step "Start services"
@@ -85,6 +116,7 @@ if "%VISIBLE_MODE%"=="1" (
     call :start_hidden_py "%SETTINGS_PY%" "%LOG_DIR%\settings_server.log" "%PID_DIR%\settings_server.pid"
     call :start_hidden_py "%REMOTE_PI_PY%" "%LOG_DIR%\remote_pi_client.log" "%PID_DIR%\remote_pi_client.pid"
     call :start_hidden_exe "%MEDIAMTX_EXE%" "%MEDIAMTX_CFG%" "%LOG_DIR%\mediamtx.log" "%PID_DIR%\mediamtx.pid"
+    call :start_watchdog
 )
 call :ok "Services launched"
 
@@ -115,6 +147,7 @@ echo ==================== CONTROL STATUS ====================
 call :show_service "SettingsServer" "%PID_DIR%\settings_server.pid"
 call :show_service "RemotePiClient" "%PID_DIR%\remote_pi_client.pid"
 call :show_service "MediaMTX" "%PID_DIR%\mediamtx.pid"
+call :show_service "MediaMTX-Watchdog" "%PID_DIR%\mediamtx_watchdog.pid"
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "$cfg = Get-Content -Raw -Path '%CONFIG_JSON%' | ConvertFrom-Json; if ($null -ne $cfg.server_ip -and -not [string]::IsNullOrWhiteSpace([string]$cfg.server_ip)) { [string]$cfg.server_ip } else { '127.0.0.1' }"`) do set "PI_IP=%%I"
 set "TARGET_URL=http://%PI_IP%:8088/"
 powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing '%TARGET_URL%' -TimeoutSec 3; Write-Host ('Web UI: UP (HTTP ' + $r.StatusCode + ') - %TARGET_URL%') } catch { Write-Host ('Web UI: DOWN - %TARGET_URL%') }"
@@ -124,6 +157,7 @@ exit /b 0
 
 :stop
 echo Stopping Control services...
+call :stop_service "%PID_DIR%\mediamtx_watchdog.pid"
 call :stop_service "%PID_DIR%\settings_server.pid"
 call :stop_service "%PID_DIR%\remote_pi_client.pid"
 call :stop_service "%PID_DIR%\mediamtx.pid"
@@ -138,6 +172,7 @@ echo Cleanup completed.
 exit /b 0
 
 :stop_silent
+call :stop_service "%PID_DIR%\mediamtx_watchdog.pid" >nul 2>&1
 call :stop_service "%PID_DIR%\settings_server.pid" >nul 2>&1
 call :stop_service "%PID_DIR%\remote_pi_client.pid" >nul 2>&1
 call :stop_service "%PID_DIR%\mediamtx.pid" >nul 2>&1
@@ -157,6 +192,10 @@ exit /b 0
 
 :start_hidden_exe
 powershell -NoProfile -Command "$p=Start-Process -FilePath '%~1' -ArgumentList '\"%~2\"' -RedirectStandardOutput '%~3' -RedirectStandardError '%~3.err' -WindowStyle Hidden -PassThru; Set-Content -Path '%~4' -Value $p.Id"
+exit /b 0
+
+:start_watchdog
+powershell -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"%WATCHDOG_PS1%\" -MediamtxExe \"%MEDIAMTX_EXE%\" -MediamtxCfg \"%MEDIAMTX_CFG%\" -LogFile \"%LOG_DIR%\mediamtx.log\" -PidFile \"%PID_DIR%\mediamtx.pid\" -WatchdogPidFile \"%PID_DIR%\mediamtx_watchdog.pid\"' -WindowStyle Hidden"
 exit /b 0
 
 :show_service

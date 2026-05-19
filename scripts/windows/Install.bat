@@ -183,6 +183,17 @@ if not exist "%APP_DIR%\status.json" (
     echo {}>"%APP_DIR%\status.json"
 )
 
+echo.
+echo Adding Windows Firewall rule for MediaMTX (port 8889)...
+netsh advfirewall firewall delete rule name="IDF MediaMTX WebRTC" >nul 2>&1
+netsh advfirewall firewall add rule name="IDF MediaMTX WebRTC" dir=in action=allow protocol=TCP localport=8889 profile=any >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] Could not add firewall rule - run Install.bat as Administrator for automatic setup
+    echo [WARN] Or: open Windows Defender Firewall ^> Inbound Rules ^> New Rule ^> Port 8889 TCP
+) else (
+    echo [OK] Firewall rule added: TCP port 8889 allowed inbound ^(all profiles^)
+)
+
 if not exist "%MEDIAMTX_EXE%" (
     echo WARNING: MediaMTX not found:
     echo %MEDIAMTX_EXE%

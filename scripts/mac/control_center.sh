@@ -64,6 +64,11 @@ run_start() {
   "$START_SCRIPT"
 }
 
+run_start_no_scan() {
+  pulse "Starting services (no scan)"
+  "$START_SCRIPT" --no-scan
+}
+
 run_stop() {
   pulse "Stopping services"
   "$STOP_SCRIPT"
@@ -80,21 +85,25 @@ menu_loop() {
     status_en
     echo
     echo "[🎛️] Choose action:"
-    echo "  1) 🚀 Start"
-    echo "  2) 🧾 Status"
-    echo "  3) ⏹️  Stop"
-    echo "  4) 🔁 Restart"
-    echo "  5) 🧹 Cleanup ghosts"
-    echo "  6) ❌ Exit"
+    echo "  1) ⚡ Quick Start  (use saved IPs, no scan)"
+    echo "  2) 🚀 Full Start   (scan network first)"
+    echo "  3) 🧾 Status"
+    echo "  4) ⏹️  Stop"
+    echo "  5) 🔁 Restart      (quick)"
+    echo "  6) 🔁 Full Restart (with scan)"
+    echo "  7) 🧹 Cleanup ghosts"
+    echo "  8) ❌ Exit"
     echo
-    read -r -p "Type 1-6 and press Enter: " choice
+    read -r -p "Type 1-8 and press Enter: " choice
     case "$choice" in
-      1) run_start ;;
-      2) run_status ;;
-      3) run_stop ;;
-      4) run_stop; run_start ;;
-      5) cleanup_ghosts ;;
-      6) echo "👋 Bye."; exit 0 ;;
+      1) run_start_no_scan ;;
+      2) run_start ;;
+      3) run_status ;;
+      4) run_stop ;;
+      5) run_stop; run_start_no_scan ;;
+      6) run_stop; run_start ;;
+      7) cleanup_ghosts ;;
+      8) echo "👋 Bye."; exit 0 ;;
       *) echo "⚠️ Invalid choice." ;;
     esac
     echo
@@ -108,8 +117,8 @@ main() {
   if is_running; then
     menu_loop
   else
-    echo "🤖 No active services detected, starting automatically..."
-    run_start
+    echo "🤖 No active services detected, starting automatically (Quick Start)..."
+    run_start_no_scan
   fi
 }
 

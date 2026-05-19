@@ -10,6 +10,7 @@ $d = Get-Content -Raw -LiteralPath $ScanJsonPath | ConvertFrom-Json
 
 $camUser = 'admin'
 $camPass = 'Aa123456!'
+$camProfile = 2
 
 if (Test-Path -LiteralPath $ConfigJsonPath) {
     try {
@@ -19,6 +20,9 @@ if (Test-Path -LiteralPath $ConfigJsonPath) {
         }
         if ($null -ne $cfg.camera_pass -and -not [string]::IsNullOrWhiteSpace([string]$cfg.camera_pass)) {
             $camPass = [string]$cfg.camera_pass
+        }
+        if ($null -ne $cfg.camera_profile -and [int]$cfg.camera_profile -in @(1, 2)) {
+            $camProfile = [int]$cfg.camera_profile
         }
     }
     catch {
@@ -34,6 +38,8 @@ if ($d.cameras) {
 $lines = New-Object System.Collections.Generic.List[string]
 $i = 1
 
+$header = @('readTimeout: 10s', 'writeTimeout: 10s', "webrtcAllowOrigin: '*'", '')
+
 if ($cams.Count -gt 0) {
     $lines.Add('paths:') | Out-Null
     foreach ($cam in $cams) {
@@ -42,7 +48,7 @@ if ($cams.Count -gt 0) {
         }
         $ip = [string]$cam.ip
         $lines.Add(('  cam{0}:' -f $i)) | Out-Null
-        $src = '    source: rtsp://' + $camUser + ':' + $camPass + '@' + $ip + ':554/profile1'
+        $src = '    source: rtsp://' + $camUser + ':' + $camPass + '@' + $ip + ':554/profile' + $camProfile
         $lines.Add($src) | Out-Null
         $lines.Add('    rtspTransport: tcp') | Out-Null
         $i++
@@ -50,8 +56,8 @@ if ($cams.Count -gt 0) {
 }
 
 if ($lines.Count -eq 0) {
-    Set-Content -LiteralPath $MediaMtxYamlPath -Value 'paths: {}' -Encoding utf8
+    Set-Content -LiteralPath $MediaMtxYamlPath -Value ($header + @('paths: {}') -join [Environment]::NewLine) -Encoding utf8
 }
 else {
-    Set-Content -LiteralPath $MediaMtxYamlPath -Value ($lines -join [Environment]::NewLine) -Encoding utf8
+    Set-Content -LiteralPath $MediaMtxYamlPath -Value (($header + $lines) -join [Environment]::NewLine) -Encoding utf8
 }

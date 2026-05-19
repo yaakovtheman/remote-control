@@ -38,8 +38,9 @@ def validate(cfg):
     if not (1 <= int(cfg["send_hz"]) <= 60): return "send_hz must be 1..60"
     if not (0.0 <= float(cfg["deadzone"]) <= 0.5): return "deadzone must be 0..0.5"
     if not (1 <= int(cfg["server_port"]) <= 65535): return "server_port invalid"
-    for k in ["axis_steer","axis_drive","axis_tilt","axis_lift"]:
+    for k in ["axis_steer","axis_tilt","axis_lift"]:
         if not (0 <= int(cfg[k]) <= 10): return f"{k} must be 0..10"
+    if not (-1 <= int(cfg.get("axis_throttle", -1)) <= 10): return "axis_throttle must be -1..10"
     if not (0 <= int(cfg["btn_estop"]) <= 30): return "btn_estop must be 0..30"
     for k in ["btn_speed_up", "btn_speed_down", "btn_park", "btn_key_on", "btn_key_start", "btn_es", "btn_impl"]:
         if not (0 <= int(cfg[k]) <= 30): return f"{k} must be 0..30"
@@ -234,6 +235,8 @@ const actionDefs = [
   {field: 'btn_key_on', label: 'KEY_ON'},
   {field: 'btn_key_start', label: 'KEY_START'},
   {field: 'btn_es', label: 'ES'},
+  {field: 'btn_gear_up', label: 'GEAR_UP'},
+  {field: 'btn_gear_dn', label: 'GEAR_DN'},
 ];
 
 async function getCfg(){
@@ -408,6 +411,21 @@ refreshStatus();
 
   <form method="post">
     <div class="box">
+      <h3>Camera Stream Quality</h3>
+      <p style="margin:0 0 10px 0; opacity:0.8; font-size:13px;">Takes effect on next startup (when cameras are re-scanned and the relay is rebuilt).</p>
+      <div class="row" style="gap:18px; align-items:center;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="camera_profile" value="2" {% if cfg.get('camera_profile',2)==2 %}checked{% endif %}>
+          <span><b>Low Quality</b> (profile2) — recommended for driving</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="camera_profile" value="1" {% if cfg.get('camera_profile',2)==1 %}checked{% endif %}>
+          <span><b>HD</b> (profile1) — for inspection / slow network is ok</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="box">
       <h3>TCP</h3>
       <div class="row">
         <div>
@@ -419,6 +437,13 @@ refreshStatus();
           <input type="number" name="server_port" value="{{cfg.server_port}}">
         </div>
       </div>
+      <div class="row">
+        <div>
+          <label>MediaMTX Host Override <span class="muted">(blank = auto-detect)</span></label>
+          <input type="text" name="mediamtx_host" value="{{cfg.get('mediamtx_host', '')}}" placeholder="e.g. 192.168.1.50">
+        </div>
+      </div>
+      <p class="muted" style="margin:4px 0 0 0;">The IP the vehicle dashboard uses to reach the camera relay (port 8889). Auto-detect picks the interface used to connect to the Pi — override if it picks the wrong one.</p>
     </div>
 
     <div class="box">
@@ -439,14 +464,14 @@ refreshStatus();
       <h3>Joystick Mapping</h3>
       <div class="row">
         <div><label>AXIS_STEER</label><input type="number" name="axis_steer" value="{{cfg.axis_steer}}"></div>
-        <div><label>AXIS_DRIVE</label><input type="number" name="axis_drive" value="{{cfg.axis_drive}}"></div>
+        <div><label>AXIS_THROTTLE (-1=off)</label><input type="number" name="axis_throttle" value="{{cfg.get('axis_throttle', -1)}}"></div>
         <div><label>AXIS_TILT</label><input type="number" name="axis_tilt" value="{{cfg.axis_tilt}}"></div>
         <div><label>AXIS_LIFT</label><input type="number" name="axis_lift" value="{{cfg.axis_lift}}"></div>
       </div>
 
       <div class="row">
         <label><input type="checkbox" name="invert_steer" {% if cfg.invert_steer %}checked{% endif %}> invert steer</label>
-        <label><input type="checkbox" name="invert_drive" {% if cfg.invert_drive %}checked{% endif %}> invert drive</label>
+        <label><input type="checkbox" name="invert_throttle" {% if cfg.invert_throttle %}checked{% endif %}> invert throttle</label>
         <label><input type="checkbox" name="invert_tilt" {% if cfg.invert_tilt %}checked{% endif %}> invert tilt</label>
         <label><input type="checkbox" name="invert_lift" {% if cfg.invert_lift %}checked{% endif %}> invert lift</label>
       </div>
@@ -478,6 +503,8 @@ refreshStatus();
       <input type="hidden" id="input-btn_key_start" name="btn_key_start" value="{{cfg.btn_key_start}}">
       <input type="hidden" id="input-btn_es" name="btn_es" value="{{cfg.btn_es}}">
       <input type="hidden" id="input-btn_impl" name="btn_impl" value="{{cfg.btn_impl}}">
+      <input type="hidden" id="input-btn_gear_up" name="btn_gear_up" value="{{cfg.get('btn_gear_up', -1)}}">
+      <input type="hidden" id="input-btn_gear_dn" name="btn_gear_dn" value="{{cfg.get('btn_gear_dn', -1)}}">
     </div>
 
     <div class="box">
@@ -515,18 +542,26 @@ def save():
     # Update from form
     cfg["server_ip"] = request.form.get("server_ip", cfg["server_ip"]).strip()
     cfg["server_port"] = int(request.form.get("server_port", cfg["server_port"]))
+    mh = request.form.get("mediamtx_host", "").strip()
+    if mh:
+        cfg["mediamtx_host"] = mh
+    else:
+        cfg.pop("mediamtx_host", None)
     cfg["send_hz"] = int(request.form.get("send_hz", cfg["send_hz"]))
     cfg["deadzone"] = float(request.form.get("deadzone", cfg["deadzone"]))
 
     cfg["axis_steer"] = int(request.form.get("axis_steer", cfg["axis_steer"]))
-    cfg["axis_drive"] = int(request.form.get("axis_drive", cfg["axis_drive"]))
+    cfg["axis_throttle"] = int(request.form.get("axis_throttle", cfg.get("axis_throttle", -1)))
     cfg["axis_tilt"] = int(request.form.get("axis_tilt", cfg["axis_tilt"]))
     cfg["axis_lift"] = int(request.form.get("axis_lift", cfg["axis_lift"]))
 
     cfg["invert_steer"] = "invert_steer" in request.form
-    cfg["invert_drive"] = "invert_drive" in request.form
+    cfg["invert_throttle"] = "invert_throttle" in request.form
     cfg["invert_tilt"] = "invert_tilt" in request.form
     cfg["invert_lift"] = "invert_lift" in request.form
+
+    camera_profile = int(request.form.get("camera_profile", cfg.get("camera_profile", 2)))
+    cfg["camera_profile"] = camera_profile if camera_profile in (1, 2) else 2
 
     cfg["btn_estop"] = int(request.form.get("btn_estop", cfg["btn_estop"]))
     cfg["btn_speed_up"] = int(request.form.get("btn_speed_up", cfg["btn_speed_up"]))
@@ -536,6 +571,10 @@ def save():
     cfg["btn_key_start"] = int(request.form.get("btn_key_start", cfg["btn_key_start"]))
     cfg["btn_es"] = int(request.form.get("btn_es", cfg["btn_es"]))
     cfg["btn_impl"] = int(request.form.get("btn_impl", cfg["btn_impl"]))
+    _gear_up = int(request.form.get("btn_gear_up", cfg.get("btn_gear_up", -1)))
+    cfg["btn_gear_up"] = _gear_up if _gear_up > 0 else -1
+    _gear_dn = int(request.form.get("btn_gear_dn", cfg.get("btn_gear_dn", -1)))
+    cfg["btn_gear_dn"] = _gear_dn if _gear_dn > 0 else -1
     cfg["hat_speed_up_dir"] = int(request.form.get("hat_speed_up_dir", cfg["hat_speed_up_dir"]))
     cfg["hat_speed_down_dir"] = int(request.form.get("hat_speed_down_dir", cfg["hat_speed_down_dir"]))
     cfg["hat_impl_dir"] = int(request.form.get("hat_impl_dir", cfg["hat_impl_dir"]))

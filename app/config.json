@@ -1,5 +1,5 @@
 {
-  "server_ip": "192.192.168.14",
+  "server_ip": "192.192.168.10",
   "server_port": 7000,
   "send_hz": 20,
   "deadzone": 0.05,
