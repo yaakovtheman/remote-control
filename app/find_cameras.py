@@ -90,7 +90,7 @@ def check_pi(ip):
 
     try:
         with urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read(1000).decode("utf-8", errors="ignore")
+            body = resp.read(8192).decode("utf-8", errors="ignore")
             data = json.loads(body)
 
             if isinstance(data, dict) and (

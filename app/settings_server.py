@@ -43,7 +43,7 @@ def validate(cfg):
     if not (-1 <= int(cfg.get("axis_throttle", -1)) <= 10): return "axis_throttle must be -1..10"
     if not (0 <= int(cfg["btn_estop"]) <= 30): return "btn_estop must be 0..30"
     for k in ["btn_speed_up", "btn_speed_down", "btn_park", "btn_key_on", "btn_key_start", "btn_es", "btn_impl"]:
-        if not (0 <= int(cfg[k]) <= 30): return f"{k} must be 0..30"
+        if not (-1 <= int(cfg[k]) <= 30): return f"{k} must be -1..30"
     for k in ["hat_speed_up_dir", "hat_speed_down_dir", "hat_impl_dir", "hat_park_dir"]:
         if not (-1 <= int(cfg[k]) <= 3): return f"{k} must be -1..3"
     return None
@@ -271,7 +271,7 @@ function readHiddenMapping(){
   const out = {};
   for (const a of actionDefs){
     const el = document.getElementById('input-' + a.field);
-    out[a.field] = el ? Number(el.value) : 0;
+    out[a.field] = el ? Number(el.value) : -1;
   }
   return out;
 }
@@ -280,7 +280,7 @@ function renderActionAssignments(){
   const wrap = document.getElementById('actionAssignments');
   if (!wrap) return;
   const mapping = readHiddenMapping();
-  const pills = actionDefs.map(a => {
+  const pills = actionDefs.filter(a => mapping[a.field] >= 0).map(a => {
     const btn = mapping[a.field];
     return '<span class="pill">' + a.label + ' -> B' + btn + '</span>';
   });
@@ -292,7 +292,7 @@ function getButtonToActionMap(){
   const out = {};
   for (const a of actionDefs){
     const btn = Number(mapping[a.field]);
-    if (Number.isFinite(btn) && btn > 0) out[btn] = a.field;
+    if (Number.isFinite(btn) && btn >= 0) out[btn] = a.field;
   }
   return out;
 }
@@ -309,14 +309,14 @@ function actionOptionsHtml(selectedField){
 function setHiddenMapping(mapping){
   for (const a of actionDefs){
     const el = document.getElementById('input-' + a.field);
-    if (el) el.value = String(mapping[a.field] ?? 0);
+    if (el) el.value = String(mapping[a.field] ?? -1);
   }
 }
 
 function onButtonActionChange(button, actionField){
   const mapping = readHiddenMapping();
   for (const a of actionDefs){
-    if (Number(mapping[a.field]) === button) mapping[a.field] = 0;
+    if (Number(mapping[a.field]) === button) mapping[a.field] = -1;
   }
   if (actionField) mapping[actionField] = button;
   setHiddenMapping(mapping);
@@ -357,7 +357,7 @@ function initMapper(cfg){
   if (mapperInitialized) return;
   mapperInitialized = true;
   syncHiddenMappingFromCfg(cfg);
-  for (const a of actionDefs) knownButtons.add(Number(cfg[a.field]));
+  for (const a of actionDefs) { const v = Number(cfg[a.field]); if (v >= 0) knownButtons.add(v); }
   renderActionAssignments();
   renderButtonMapper(true);
 }
@@ -572,9 +572,9 @@ def save():
     cfg["btn_es"] = int(request.form.get("btn_es", cfg["btn_es"]))
     cfg["btn_impl"] = int(request.form.get("btn_impl", cfg["btn_impl"]))
     _gear_up = int(request.form.get("btn_gear_up", cfg.get("btn_gear_up", -1)))
-    cfg["btn_gear_up"] = _gear_up if _gear_up > 0 else -1
+    cfg["btn_gear_up"] = _gear_up if _gear_up >= 0 else -1
     _gear_dn = int(request.form.get("btn_gear_dn", cfg.get("btn_gear_dn", -1)))
-    cfg["btn_gear_dn"] = _gear_dn if _gear_dn > 0 else -1
+    cfg["btn_gear_dn"] = _gear_dn if _gear_dn >= 0 else -1
     cfg["hat_speed_up_dir"] = int(request.form.get("hat_speed_up_dir", cfg["hat_speed_up_dir"]))
     cfg["hat_speed_down_dir"] = int(request.form.get("hat_speed_down_dir", cfg["hat_speed_down_dir"]))
     cfg["hat_impl_dir"] = int(request.form.get("hat_impl_dir", cfg["hat_impl_dir"]))

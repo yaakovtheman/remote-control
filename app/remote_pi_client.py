@@ -352,7 +352,8 @@ def safe_read_inputs(js, conn_start_ms=None):
         _gear_dn_prev = gear_dn_now
 
         # --- E-STOP ---
-        if js.get_button(BTN_ESTOP) == 1:
+        nbtns = js.get_numbuttons()
+        if BTN_ESTOP < nbtns and js.get_button(BTN_ESTOP) == 1:
             reset_spd_queues()
             return b"STOP\n", True, js.get_name(), {
                 "estop_pressed": True,
@@ -364,8 +365,8 @@ def safe_read_inputs(js, conn_start_ms=None):
         buttons = 0
 
         # Rising-edge detection for speed buttons via state polling.
-        spdup_now = bool(js.get_button(BTN_SPDUP_IN))
-        spddn_now = bool(js.get_button(BTN_SPDDN_IN))
+        spdup_now = 0 <= BTN_SPDUP_IN < nbtns and bool(js.get_button(BTN_SPDUP_IN))
+        spddn_now = 0 <= BTN_SPDDN_IN < nbtns and bool(js.get_button(BTN_SPDDN_IN))
         if spdup_now and not _spdup_prev and _spd_up_queue < _SPD_QUEUE_MAX:
             _spd_up_queue += 1
         if spddn_now and not _spddn_prev and _spd_dn_queue < _SPD_QUEUE_MAX:
@@ -381,11 +382,11 @@ def safe_read_inputs(js, conn_start_ms=None):
         if up_bit: buttons |= BTN_SPDUP
         if dn_bit: buttons |= BTN_SPDDN
 
-        if js.get_button(BTN_PARK_IN): buttons |= BTN_PARK
-        if js.get_button(BTN_KEYON_IN): buttons |= BTN_KEYON
-        if js.get_button(BTN_KEYSTART_IN): buttons |= BTN_KEYSTART
-        if js.get_button(BTN_ES_IN): buttons |= BTN_ES
-        if js.get_button(BTN_IMPL_IN): buttons |= BTN_IMPL
+        if 0 <= BTN_PARK_IN < nbtns and js.get_button(BTN_PARK_IN): buttons |= BTN_PARK
+        if 0 <= BTN_KEYON_IN < nbtns and js.get_button(BTN_KEYON_IN): buttons |= BTN_KEYON
+        if 0 <= BTN_KEYSTART_IN < nbtns and js.get_button(BTN_KEYSTART_IN): buttons |= BTN_KEYSTART
+        if 0 <= BTN_ES_IN < nbtns and js.get_button(BTN_ES_IN): buttons |= BTN_ES
+        if 0 <= BTN_IMPL_IN < nbtns and js.get_button(BTN_IMPL_IN): buttons |= BTN_IMPL
 
         hat = None
         if js.get_numhats() > 0:
@@ -495,6 +496,7 @@ def main():
 
             # Build outgoing line
             if js is None:
+                pygame.event.pump()  # keep SDL2 alive so it can detect controller reconnects
                 line = b"STOP\n"
                 joy_connected = False
                 joy_name = None
